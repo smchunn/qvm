@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, CommandFactory};
+use clap_complete::{generate, Generator, Shell};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::File;
@@ -147,6 +148,18 @@ enum Cmd {
         #[arg(long)]
         spice_disable_ticketing: Option<bool>,
     },
+
+    /// Generate shell completions
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+
+    /// Install Fish shell completions automatically
+    InstallFish,
+
+    /// Generate man page
+    ManPage,
 }
 
 /// JSON schema
@@ -236,7 +249,7 @@ fn now_utc() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-fn rm_if_exists(p: &Path) {
+fn _rm_if_exists(p: &Path) {
     let _ = fs::remove_file(p);
 }
 
@@ -325,6 +338,41 @@ fn is_vm_running(name: &str) -> Result<bool> {
     Ok(false)
 }
 
+/// Generate shell completions
+fn print_completions<G: Generator>(gen: G, cmd: &mut clap::Command) {
+    generate(gen, cmd, cmd.get_name().to_string(), &mut std::io::stdout());
+}
+
+/// Install Fish completions automatically
+fn install_fish_completions() -> Result<()> {
+    let fish_dir = dirs::config_dir()
+        .ok_or_else(|| anyhow!("Could not find config directory"))?
+        .join("fish")
+        .join("completions");
+
+    fs::create_dir_all(&fish_dir)?;
+
+    let completion_file = fish_dir.join("qvm.fish");
+    let mut cmd = Cli::command();
+    let mut file = File::create(&completion_file)?;
+
+    generate(Shell::Fish, &mut cmd, "qvm", &mut file);
+
+    println!("Fish completions installed to: {}", completion_file.display());
+    Ok(())
+}
+
+/// Generate man page
+fn generate_man_page() -> Result<()> {
+    let cmd = Cli::command();
+    let man = clap_mangen::Man::new(cmd);
+    let mut buffer: Vec<u8> = Vec::new();
+    man.render(&mut buffer)?;
+
+    print!("{}", String::from_utf8(buffer)?);
+    Ok(())
+}
+
 /// Delete VM implementation
 fn delete_vm(name: &str, force: bool) -> Result<()> {
     // Check if VM exists
@@ -363,7 +411,7 @@ fn delete_vm(name: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn cpu_total(s: u32, c: u32, t: u32) -> u32 {
+fn _cpu_total(s: u32, c: u32, t: u32) -> u32 {
     s.saturating_mul(c).saturating_mul(t)
 }
 
@@ -465,7 +513,7 @@ fn locate_firmware_from_qemu(qemu_bin: &Path, arch: &str) -> Result<(PathBuf, Pa
     Err(anyhow!("UEFI firmware not found in Nix paths for {}", arch))
 }
 
-fn display_args(cfg: &VmConfig) -> Result<Vec<String>> {
+fn _display_args(cfg: &VmConfig) -> Result<Vec<String>> {
     let mut base = vec![
         "-vga".into(),
         "none".into(),
@@ -679,10 +727,10 @@ fn main() -> Result<()> {
 
         Cmd::Start {
             name,
-            iso,
-            display,
-            console,
-            daemon
+            iso: _,
+            display: _,
+            console: _,
+            daemon: _
         } => {
             // Implementation would go here - this is just a placeholder
             println!("Starting VM '{}' (not implemented in this example)", name);
@@ -700,20 +748,241 @@ fn main() -> Result<()> {
         Cmd::SetDisplay {
             name,
             mode,
-            vnc_unix,
-            vnc_host,
-            vnc_display,
-            vnc_sock,
-            spice_unix,
-            spice_addr,
-            spice_port,
-            spice_sock,
-            spice_disable_ticketing
+            vnc_unix: _,
+            vnc_host: _,
+            vnc_display: _,
+            vnc_sock: _,
+            spice_unix: _,
+            spice_addr: _,
+            spice_port: _,
+            spice_sock: _,
+            spice_disable_ticketing: _
         } => {
             // Implementation would go here - this is just a placeholder
             println!("Setting display for VM '{}' to '{}' (not implemented in this example)", name, mode);
         }
+
+        Cmd::Completions { shell } => {
+            let mut cmd = Cli::command();
+            print_completions(shell, &mut cmd);
+        }
+
+        Cmd::InstallFish => {
+            install_fish_completions()?;
+        }
+
+        Cmd::ManPage => {
+            generate_man_page()?;
+        }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_now_utc() {
+        let timestamp = now_utc();
+        println!("Timestamp: {}", timestamp);
+        assert!(timestamp.contains("T"));
+        // The timestamp should end with Z (UTC) or +00:00
+        assert!(timestamp.ends_with("Z") || timestamp.ends_with("+00:00"));
+    }
+
+    #[test]
+    fn test_resolve_under_root() {
+        let root = PathBuf::from("/tmp/test");
+
+        // Test absolute path
+        let abs_path = PathBuf::from("/absolute/path");
+        assert_eq!(resolve_under_root(&root, &abs_path), abs_path);
+
+        // Test relative path
+        let rel_path = PathBuf::from("relative/path");
+        assert_eq!(resolve_under_root(&root, &rel_path), root.join("relative/path"));
+    }
+
+    #[test]
+    fn test_conf_path() {
+        let root = PathBuf::from("/tmp/test");
+        assert_eq!(conf_path(&root), root.join("vm.json"));
+    }
+
+    #[test]
+    fn test_cpu_total() {
+        assert_eq!(_cpu_total(2, 4, 2), 16);
+        assert_eq!(_cpu_total(1, 8, 1), 8);
+        assert_eq!(_cpu_total(0, 4, 2), 0);
+    }
+
+    #[test]
+    fn test_qvm_home() {
+        let home = qvm_home().unwrap();
+        assert!(home.to_string_lossy().contains("qvm"));
+    }
+
+    #[test]
+    fn test_find_vm_dir_nonexistent() {
+        let result = find_vm_dir("nonexistent-vm-test-12345");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_pick_qemu_bin() {
+        // Test supported architectures
+        let result_aarch64 = pick_qemu_bin("aarch64");
+        let result_x86_64 = pick_qemu_bin("x86_64");
+
+        // At least one should work (depending on system)
+        if result_aarch64.is_err() && result_x86_64.is_err() {
+            // This is expected on systems without QEMU
+            println!("QEMU not found (expected on some test systems)");
+        }
+
+        // Test unsupported architecture
+        let result = pick_qemu_bin("unsupported");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported arch"));
+    }
+
+    #[test]
+    fn test_vm_config_serialization() {
+        let config = VmConfig {
+            meta: Meta {
+                version: 1,
+                generated: now_utc(),
+                name: "test-vm".to_string(),
+                arch: "aarch64".to_string(),
+                uuid: "test-uuid".to_string(),
+            },
+            paths: Paths {
+                root: PathBuf::from("/tmp/test"),
+                disk: PathBuf::from("disk.qcow2"),
+                efi_vars: PathBuf::from("efi_vars.fd"),
+            },
+            hardware: Hardware {
+                cpu_model: "host".to_string(),
+                sockets: 1,
+                cores: 4,
+                threads: 1,
+                mem_mb: 4096,
+                machine: "virt".to_string(),
+                accel: "hvf".to_string(),
+                mac: "52:54:00:12:34:56".to_string(),
+            },
+            firmware: Firmware {
+                code: PathBuf::from("/path/to/code.fd"),
+                vars_template: PathBuf::from("/path/to/vars.fd"),
+            },
+            network: Network {
+                mode: "vmnet-shared".to_string(),
+                bridge_if: "en0".to_string(),
+                forwards: Forwards::default(),
+            },
+            display: Display {
+                mode: "cocoa".to_string(),
+                vnc: Vnc {
+                    use_unix: false,
+                    host: "127.0.0.1".to_string(),
+                    display: 1,
+                    sock: PathBuf::from("vnc.sock"),
+                },
+                spice: Spice {
+                    use_unix: false,
+                    addr: "127.0.0.1".to_string(),
+                    port: 5930,
+                    disable_ticketing: true,
+                    sock: PathBuf::from("spice.sock"),
+                },
+            },
+        };
+
+        // Test serialization
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("test-vm"));
+        assert!(json.contains("aarch64"));
+
+        // Test deserialization
+        let parsed: VmConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.meta.name, "test-vm");
+        assert_eq!(parsed.meta.arch, "aarch64");
+    }
+
+    #[test]
+    fn test_save_and_load_conf() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().to_path_buf();
+
+        let config = VmConfig {
+            meta: Meta {
+                version: 1,
+                generated: now_utc(),
+                name: "test-vm".to_string(),
+                arch: "aarch64".to_string(),
+                uuid: "test-uuid".to_string(),
+            },
+            paths: Paths {
+                root: root.clone(),
+                disk: PathBuf::from("disk.qcow2"),
+                efi_vars: PathBuf::from("efi_vars.fd"),
+            },
+            hardware: Hardware {
+                cpu_model: "host".to_string(),
+                sockets: 1,
+                cores: 4,
+                threads: 1,
+                mem_mb: 4096,
+                machine: "virt".to_string(),
+                accel: "hvf".to_string(),
+                mac: "52:54:00:12:34:56".to_string(),
+            },
+            firmware: Firmware {
+                code: PathBuf::from("/path/to/code.fd"),
+                vars_template: PathBuf::from("/path/to/vars.fd"),
+            },
+            network: Network {
+                mode: "vmnet-shared".to_string(),
+                bridge_if: "en0".to_string(),
+                forwards: Forwards::default(),
+            },
+            display: Display {
+                mode: "cocoa".to_string(),
+                vnc: Vnc {
+                    use_unix: false,
+                    host: "127.0.0.1".to_string(),
+                    display: 1,
+                    sock: PathBuf::from("vnc.sock"),
+                },
+                spice: Spice {
+                    use_unix: false,
+                    addr: "127.0.0.1".to_string(),
+                    port: 5930,
+                    disable_ticketing: true,
+                    sock: PathBuf::from("spice.sock"),
+                },
+            },
+        };
+
+        // Save config
+        save_conf(&config).unwrap();
+
+        // Verify file was created
+        let config_path = conf_path(&root);
+        assert!(config_path.exists());
+
+        // Load and verify config
+        let loaded_config: VmConfig = {
+            let file = File::open(&config_path).unwrap();
+            serde_json::from_reader(file).unwrap()
+        };
+
+        assert_eq!(loaded_config.meta.name, "test-vm");
+        assert_eq!(loaded_config.meta.arch, "aarch64");
+        assert_eq!(loaded_config.hardware.mem_mb, 4096);
+    }
 }
