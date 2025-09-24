@@ -14,8 +14,11 @@ pub fn print_completions<G: Generator>(gen: G, cmd: &mut clap::Command) {
 
 /// Install Fish completions automatically
 pub fn install_fish_completions() -> Result<()> {
-    let fish_dir = dirs::config_dir()
-        .ok_or_else(|| anyhow!("Could not find config directory"))?
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| anyhow!("Could not find home directory"))?;
+
+    let fish_dir = home_dir
+        .join(".config")
         .join("fish")
         .join("completions");
 
